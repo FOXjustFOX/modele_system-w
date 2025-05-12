@@ -51,9 +51,59 @@ def euler(f, X0, t):
     return X
 
 
+# ==== Funkcja do obliczania średniego błędu aproksymacji dla metody Eulera ====
+def calculate_euler_error(system, initial_conditions, t_values):
+    """
+    Oblicza średni błąd aproksymacji metody Eulera względem odeint
+    """
+    # Oblicz rozwiązanie metodą Eulera
+    euler_solution = euler(system, initial_conditions, t_values)
+    
+    # Oblicz dokładne rozwiązanie za pomocą odeint dla tych samych punktów czasowych
+    odeint_solution = odeint(system, initial_conditions, t_values)
+    
+    # Jeśli metoda Eulera zakończyła się wcześniej, przytnij dane referencyjne
+    if len(euler_solution) < len(t_values):
+        print(f"Metoda Eulera zakończyła się wcześniej w kroku {len(euler_solution)}/{len(t_values)}")
+        t_truncated = t_values[:len(euler_solution)]
+        odeint_solution = odeint_solution[:len(euler_solution)]
+    else:
+        t_truncated = t_values
+    
+    # Oblicz błąd (odległość euklidesowa) dla każdego kroku czasowego
+    errors = np.sqrt(np.sum((euler_solution - odeint_solution[:len(euler_solution)])**2, axis=1))
+    
+    # Oblicz średni błąd
+    mean_error = np.mean(errors)
+    
+    return mean_error, errors, t_truncated
+
 # ==== LOTKA-VOLTERRA: Euler – wykresy dla różnych kroków dt ====
 dt_values_lv = [0.3, 0.1, 0.01]  # trzy różne kroki czasowe
 t_max = 25  # czas symulacji
+
+# Obliczanie i wyświetlanie błędów dla układu Lotki-Volterry
+print("\n==== Lotka-Volterra: Średnie błędy aproksymacji ====")
+lv_errors = {}
+fig_lv_error = plt.figure(figsize=(10, 6))
+plt.title("Błędy aproksymacji dla układu Lotki-Volterry")
+
+for dt in dt_values_lv:
+    t = np.arange(0, t_max, dt)
+    mean_error, errors, t_truncated = calculate_euler_error(lotka_volterra, [2, 1], t)
+    lv_errors[dt] = mean_error
+    print(f"dt = {dt}: Średni błąd = {mean_error:.6e}")
+    
+    # Dodaj błędy do wykresu
+    plt.plot(t_truncated, errors, label=f"dt = {dt}")
+
+plt.xlabel("Czas [t]")
+plt.ylabel("Błąd (odległość euklidesowa)")
+plt.yscale('log')  # Skala logarytmiczna dla lepszej widoczności
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
 
 for dt in dt_values_lv:
     t = np.arange(0, t_max, dt)
@@ -87,10 +137,34 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-# ==== LORENZ: Euler – 9 rzutów trajektorii (x/y/z w parach) ====
+# ==== LORENZ: Obliczanie błędów dla różnych dt ====
 dt_values_lorenz = [0.01, 0.005, 0.001]  # zmniejszone dt by zapobiec błędom
 t_max = 25
 
+# Obliczanie i wyświetlanie błędów dla układu Lorenza
+print("\n==== Lorenz: Średnie błędy aproksymacji ====")
+lorenz_errors = {}
+fig_lorenz_error = plt.figure(figsize=(10, 6))
+plt.title("Błędy aproksymacji dla układu Lorenza")
+
+for dt in dt_values_lorenz:
+    t = np.arange(0, t_max, dt)
+    mean_error, errors, t_truncated = calculate_euler_error(lorenz, [1, 1, 1], t)
+    lorenz_errors[dt] = mean_error
+    print(f"dt = {dt}: Średni błąd = {mean_error:.6e}")
+    
+    # Dodaj błędy do wykresu
+    plt.plot(t_truncated, errors, label=f"dt = {dt}")
+
+plt.xlabel("Czas [t]")
+plt.ylabel("Błąd (odległość euklidesowa)")
+plt.yscale('log')  # Skala logarytmiczna dla lepszej widoczności
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# ==== LORENZ: Euler – 9 rzutów trajektorii (x/y/z w parach) ====
 fig, axes = plt.subplots(3, 3, figsize=(12, 12))
 fig.suptitle("Układ Lorenza zamodelowany przy pomocy metody Eulera", fontsize=16)
 
