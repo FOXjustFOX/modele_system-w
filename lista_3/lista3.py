@@ -1,319 +1,316 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.integrate import solve_ivp
-from mpl_toolkits.mplot3d import Axes3D # Dla wykresów 3D
+from scipy.integrate import odeint
+from mpl_toolkits.mplot3d import Axes3D  # Do tworzenia wykresów 3D
 
-# Ustawienie stylu wykresów dla lepszej czytelności (opcjonalnie)
-plt.style.use('ggplot')
 
-# --- Definicje Układów ---
-
-def lotka_volterra_rhs(t, state, a, b, c, d):
-    """
-    Definiuje układ równań Lotki-Volterry.
-    state: [x, y] - populacja ofiar i drapieżników
-    t: czas (nieużywany jawnie w tym układzie, ale wymagany przez solve_ivp)
-    a, b, c, d: parametry układu
-    """
-    x, y = state
+# ==== Definicje układów różniczkowych ====
+# Układ Lotki-Volterry: 
+def lotka_volterra(X, t, a=1.2, b=0.6, c=0.3, d=0.8):
+    x, y = X
     dxdt = (a - b * y) * x
     dydt = (c * x - d) * y
     return [dxdt, dydt]
 
-def lorenz_rhs(t, state, sigma, rho, beta):
-    """
-    Definiuje układ równań Lorenza.
-    state: [x, y, z]
-    t: czas (nieużywany jawnie w tym układzie, ale wymagany przez solve_ivp)
-    sigma, rho, beta: parametry układu
-    """
-    x, y, z = state
+
+# Układ Lorenza:
+def lorenz(X, t, sigma=10, beta=8 / 3, rho=28):
+    x, y, z = X
     dxdt = sigma * (y - x)
     dydt = x * (rho - z) - y
     dzdt = x * y - beta * z
     return [dxdt, dydt, dzdt]
 
-# --- Implementacja Metody Eulera ---
 
-def euler_solver(rhs_func, y0, t_span, dt, args_rhs=()):
-    """
-    Implementacja metody Eulera do rozwiązywania układów równań różniczkowych.
-    rhs_func: funkcja definiująca prawą stronę układu (np. lotka_volterra_rhs)
-    y0: warunki początkowe [lista lub array]
-    t_span: krotka (t_start, t_end) definiująca przedział czasu
-    dt: krok czasowy
-    args_rhs: krotka dodatkowych argumentów dla rhs_func (parametry układu)
-    """
-    t_start, t_end = t_span
-    num_steps = int((t_end - t_start) / dt)
-    
-    t_values = np.linspace(t_start, t_end, num_steps + 1)
-    y_values = np.zeros((len(y0), num_steps + 1))
-    y_values[:, 0] = y0
-    
-    for i in range(num_steps):
-        current_y = y_values[:, i]
-        # Dla funkcji rhs_func, która akceptuje (t, y, *args)
-        derivatives = np.array(rhs_func(t_values[i], current_y, *args_rhs))
-        y_values[:, i+1] = current_y + dt * derivatives
-        
-    return t_values, y_values
+# ==== Własna implementacja metody Eulera ====
+def euler(f, X0, t):
+    if len(t) < 2:
+         return np.array([X0]) if len(t) > 0 else np.array([])
 
-# Dodajemy funkcję pomocniczą do bezpiecznego ustawiania limitów osi
-def safe_set_lim(axis, is_x_axis, data, default_min=-50, default_max=50):
-    """
-    Bezpiecznie ustawia limity osi, obsługując przypadki NaN i Inf
-    """
-    # Filtrujemy wartości, żeby usunąć NaN i Inf
-    valid_data = data[np.isfinite(data)]
-    
-    if len(valid_data) == 0:  # Jeśli wszystkie wartości są NaN/Inf
-        min_val, max_val = default_min, default_max
+    dt = t[1] - t[0]  # krok czasowy (zakładamy stały krok)
+    X = np.zeros((len(t), len(X0)))  # macierz na wynik
+    X[0] = np.array(X0)  # warunki początkowe
+
+    for i in range(1, len(t)):
+        dX = np.array(f(X[i - 1], t[i - 1]))
+
+        if np.any(np.isnan(dX)) or np.any(np.isinf(dX)) or np.any(np.abs(dX) > 1e10):
+             print(f"Euler warning/error in step {i} for dt={dt}: dX = {dX}. Truncating result.")
+             return X[:i]
+
+        X[i] = X[i - 1] + dt * dX
+
+        if (
+            np.any(np.isnan(X[i]))
+            or np.any(np.isinf(X[i]))
+            or np.any(np.abs(X[i]) > 1e10)
+        ):
+            print(f"Euler warning/error in step {i} for dt={dt}: X = {X[i]}. Truncating result.")
+            return X[:i]
+
+    return X
+
+
+# ==== Funkcja do obliczania błędu aproksymacji dla metody Eulera ====
+def calculate_euler_error(system, initial_conditions, t_values):
+    euler_solution = euler(system, initial_conditions, t_values)
+
+    if len(euler_solution) == 0:
+         print("Euler simulation returned no points. Cannot calculate error.")
+         return np.nan, np.array([]), np.array([])
+
+    t_truncated = t_values[: len(euler_solution)]
+    if len(t_truncated) == 0:
+        print("Truncated time vector is empty. Cannot calculate error.")
+        return np.nan, np.array([]), np.array([])
+
+    odeint_solution = odeint(system, initial_conditions, t_truncated, rtol=1e-8, atol=1e-8)
+
+    if odeint_solution.shape[0] != len(t_truncated):
+         print(f"Warning: odeint returned {odeint_solution.shape[0]} points, expected {len(t_truncated)}. Skipping error calculation.")
+         return np.nan, np.array([]), np.array([])
+
+    errors = np.sqrt(
+        np.sum((euler_solution - odeint_solution) ** 2, axis=1)
+    )
+
+    mean_error = np.mean(errors) if len(errors) > 0 else np.nan
+
+    return mean_error, errors, t_truncated
+
+
+# ==== LOTKA-VOLTERRA: Euler – wykresy dla różnych kroków dt ====
+dt_values_lv = [0.001, 0.03, 0.015, 0.3]
+t_max_lv = 25
+initial_conditions_lv = [2, 1]
+
+print("==== Lotka-Volterra: Obliczanie i wyświetlanie błędów aproksymacji ====")
+lv_errors = {}
+fig_lv_error = plt.figure(figsize=(10, 6))
+plt.title("Błędy aproksymacji metody Eulera dla układu Lotki-Volterry")
+
+dt_values_lv_sorted = sorted(dt_values_lv)
+
+for dt in dt_values_lv_sorted:
+    t = np.arange(0, t_max_lv + dt/2, dt)
+    mean_error, errors, t_truncated = calculate_euler_error(
+        lotka_volterra, initial_conditions_lv, t
+    )
+    lv_errors[dt] = mean_error
+
+    if not np.isnan(mean_error):
+        print(f"dt = {dt}: Średni błąd = {mean_error:.6e}")
+        plt.plot(t_truncated, errors, label=f"dt = {dt}")
     else:
-        data_min = np.min(valid_data)
-        data_max = np.max(valid_data)
-        
-        # Ustalamy rozsądne granice
-        min_val = default_min if data_min < -1e3 or np.isnan(data_min) else data_min
-        max_val = default_max if data_max > 1e3 or np.isnan(data_max) else data_max
-        
-        # Dodatkowa kontrola wartości
-        if not np.isfinite(min_val): min_val = default_min
-        if not np.isfinite(max_val): max_val = default_max
-        
-        # Jeśli min > max (co może się zdarzyć po filtracji), zamieniamy je
-        if min_val > max_val:
-            min_val, max_val = default_min, default_max
-    
-    # Ustawiamy limity osi
-    if is_x_axis:
-        axis.set_xlim(left=min_val, right=max_val)
-    else:
-        axis.set_ylim(bottom=min_val, top=max_val)
+         print(f"dt = {dt}: Nie można obliczyć błędu (symulacja Eulera nie powiodła się lub brak danych)")
 
-# --- Parametry i Warunki Początkowe ---
-
-# Lotka-Volterra
-a, b, c, d = 1.2, 0.6, 0.3, 0.8
-x0_lv, y0_lv = 2, 1
-initial_state_lv = [x0_lv, y0_lv]
-t_span_lv = (0, 25)
-dt_values_lv = [0.3, 0.1, 0.01] # Zgodnie z Rysunkiem 1
-
-# Lorenz
-sigma, rho, beta = 10, 28, 8/3
-x0_l, y0_l, z0_l = 1, 1, 1
-initial_state_lorenz = [x0_l, y0_l, z0_l]
-t_span_lorenz = (0, 25) # W przykładach t_end jest 25, ale w opisie fig 2 jest t_end=25, a w Fig 4,5 t_end=25. Użyjmy 25.
-dt_values_lorenz = [0.03, 0.02, 0.01] # Zgodnie z Rysunkiem 2
-
-# --- Symulacja i Wykresy: Układ Lotki-Volterry ---
-
-print("--- Układ Lotki-Volterry ---")
-
-# 1. Metoda Eulera dla Lotki-Volterry
-print("\n1. Metoda Eulera:")
-fig_lv_euler, axes_lv_euler = plt.subplots(len(dt_values_lv), 1, figsize=(10, 5 * len(dt_values_lv)), sharex=True)
-if len(dt_values_lv) == 1: # Jeśli tylko jeden dt, axes nie jest listą
-    axes_lv_euler = [axes_lv_euler]
-
-print("Obliczanie średniego błędu aproksymacji dla metody Eulera (Lotka-Volterra):")
-# Rozwiązanie referencyjne z scipy (do obliczenia błędu)
-# Używamy małego kroku dla t_eval aby mieć gęste rozwiązanie referencyjne
-t_eval_ref_lv = np.linspace(t_span_lv[0], t_span_lv[1], 2000) # Gęsta siatka do interpolacji
-sol_lv_scipy_ref = solve_ivp(
-    lotka_volterra_rhs, t_span_lv, initial_state_lv,
-    args=(a, b, c, d), dense_output=True, t_eval=t_eval_ref_lv
-)
-
-for i, dt_lv in enumerate(dt_values_lv):
-    t_euler_lv, y_euler_lv = euler_solver(lotka_volterra_rhs, initial_state_lv, t_span_lv, dt_lv, args_rhs=(a,b,c,d))
-    x_euler_lv, y_euler_lv_pop = y_euler_lv[0,:], y_euler_lv[1,:]
-    
-    ax = axes_lv_euler[i]
-    ax.plot(t_euler_lv, x_euler_lv, label='Ofiary (x) - Euler', color='red')
-    ax.plot(t_euler_lv, y_euler_lv_pop, label='Drapieżniki (y) - Euler', color='blue')
-    ax.set_title(f'Układ Lotki-Volterry (Metoda Eulera), dt = {dt_lv}')
-    ax.set_xlabel('Czas t')
-    ax.set_ylabel('Populacja')
-    ax.legend()
-    ax.grid(True)
-
-    # Obliczanie błędu
-    # Interpolacja rozwiązania Scipy do punktów czasowych Eulera
-    y_scipy_at_euler_t = sol_lv_scipy_ref.sol(t_euler_lv)
-    error_x = np.mean(np.abs(x_euler_lv - y_scipy_at_euler_t[0,:]))
-    error_y = np.mean(np.abs(y_euler_lv_pop - y_scipy_at_euler_t[1,:]))
-    avg_error = (error_x + error_y) / 2
-    print(f"  dt = {dt_lv}: Średni błąd (x): {error_x:.4e}, Średni błąd (y): {error_y:.4e}, Łączny średni: {avg_error:.4e}")
-    
-    # Sprawdzenie czy rozwiązanie jest rozbieżne (prosty test)
-    if np.any(np.abs(x_euler_lv) > 1e6) or np.any(np.abs(y_euler_lv_pop) > 1e6):
-        print(f"    UWAGA: Rozwiązanie dla dt={dt_lv} może być rozbieżne.")
-        ax.set_ylim(bottom=0, top=min(np.max(y_euler_lv_pop)*1.1 if np.max(y_euler_lv_pop) < 1e6 else 50, 50)) # Ograniczenie osi Y dla rozbieżnych
-
-fig_lv_euler.suptitle('Układ Lotki-Volterry zamodelowany przy pomocy metody Eulera', fontsize=16, y=1.02)
-fig_lv_euler.tight_layout(rect=[0, 0, 1, 0.98])
-
-# 2. Metoda scipy.integrate dla Lotki-Volterry
-print("\n2. Metoda scipy.integrate (solve_ivp):")
-dt_scipy_plot_lv = 0.002 # Krok dla t_eval, zgodnie z opisem Fig 3
-t_eval_lv_scipy = np.arange(t_span_lv[0], t_span_lv[1] + dt_scipy_plot_lv, dt_scipy_plot_lv)
-
-sol_lv_scipy = solve_ivp(
-    lotka_volterra_rhs, t_span_lv, initial_state_lv,
-    args=(a, b, c, d), dense_output=True, t_eval=t_eval_lv_scipy
-)
-
-fig_lv_scipy, ax_lv_scipy = plt.subplots(1, 1, figsize=(12, 6))
-ax_lv_scipy.plot(sol_lv_scipy.t, sol_lv_scipy.y[0,:], label='Ofiary (x) - Scipy', color='red')
-ax_lv_scipy.plot(sol_lv_scipy.t, sol_lv_scipy.y[1,:], label='Drapieżniki (y) - Scipy', color='blue')
-ax_lv_scipy.set_title(f'Układ Lotki-Volterry (scipy.integrate.solve_ivp), dt_eval = {dt_scipy_plot_lv}')
-ax_lv_scipy.set_xlabel('Czas t')
-ax_lv_scipy.set_ylabel('Populacja')
-ax_lv_scipy.legend()
-ax_lv_scipy.grid(True)
-fig_lv_scipy.tight_layout()
-
-
-# --- Symulacja i Wykresy: Układ Lorenza ---
-print("\n\n--- Układ Lorenza ---")
-
-# 1. Metoda Eulera dla Lorenza
-print("\n1. Metoda Eulera:")
-num_dt_lorenz = len(dt_values_lorenz)
-# Wykresy 2D (rzuty) - jak na Rysunku 2
-fig_lorenz_euler_2d, axes_lorenz_euler_2d = plt.subplots(num_dt_lorenz, 3, figsize=(15, 5 * num_dt_lorenz))
-if num_dt_lorenz == 1: # Poprawka dla pojedynczego dt
-    axes_lorenz_euler_2d = np.array([axes_lorenz_euler_2d])
-
-
-# Wykresy 3D - jeden dla każdego dt Eulera
-figs_lorenz_euler_3d = []
-axes_lorenz_euler_3d = []
-for _ in range(num_dt_lorenz):
-    fig = plt.figure(figsize=(8,6))
-    ax = fig.add_subplot(111, projection='3d')
-    figs_lorenz_euler_3d.append(fig)
-    axes_lorenz_euler_3d.append(ax)
-
-
-print("Obliczanie średniego błędu aproksymacji dla metody Eulera (Lorenz):")
-# Rozwiązanie referencyjne z scipy (do obliczenia błędu)
-t_eval_ref_lorenz = np.linspace(t_span_lorenz[0], t_span_lorenz[1], 5000) # Gęstsza siatka
-sol_lorenz_scipy_ref = solve_ivp(
-    lorenz_rhs, t_span_lorenz, initial_state_lorenz,
-    args=(sigma, rho, beta), dense_output=True, t_eval=t_eval_ref_lorenz
-)
-
-for i, dt_lorenz in enumerate(dt_values_lorenz):
-    t_euler_lorenz, y_euler_lorenz = euler_solver(lorenz_rhs, initial_state_lorenz, t_span_lorenz, dt_lorenz, args_rhs=(sigma, rho, beta))
-    x_e, y_e, z_e = y_euler_lorenz[0,:], y_euler_lorenz[1,:], y_euler_lorenz[2,:]
-
-    # Wykresy 2D
-    # y(x)
-    axes_lorenz_euler_2d[i, 0].plot(x_e, y_e, color='red')
-    axes_lorenz_euler_2d[i, 0].set_xlabel('x')
-    axes_lorenz_euler_2d[i, 0].set_ylabel('y')
-    axes_lorenz_euler_2d[i, 0].set_title(f'y(x), dt = {dt_lorenz}')
-    axes_lorenz_euler_2d[i, 0].grid(True)
-    # z(x)
-    axes_lorenz_euler_2d[i, 1].plot(x_e, z_e, color='red')
-    axes_lorenz_euler_2d[i, 1].set_xlabel('x')
-    axes_lorenz_euler_2d[i, 1].set_ylabel('z')
-    axes_lorenz_euler_2d[i, 1].set_title(f'z(x), dt = {dt_lorenz}')
-    axes_lorenz_euler_2d[i, 1].grid(True)
-    # z(y)
-    axes_lorenz_euler_2d[i, 2].plot(y_e, z_e, color='red')
-    axes_lorenz_euler_2d[i, 2].set_xlabel('y')
-    axes_lorenz_euler_2d[i, 2].set_ylabel('z')
-    axes_lorenz_euler_2d[i, 2].set_title(f'z(y), dt = {dt_lorenz}')
-    axes_lorenz_euler_2d[i, 2].grid(True)
-
-    # Sprawdzenie czy rozwiązanie jest rozbieżne
-    if np.any(np.abs(x_e) > 1e3) or np.any(np.abs(y_e) > 1e3) or np.any(np.abs(z_e) > 1e3) or \
-       np.any(np.isnan(x_e)) or np.any(np.isnan(y_e)) or np.any(np.isnan(z_e)):
-         print(f"    UWAGA: Rozwiązanie Lorenza dla dt={dt_lorenz} może być rozbieżne lub zawierać wartości NaN.")
-         # Bezpieczne ustawienie limitów osi dla lepszej wizualizacji
-         for k_ax in range(3):
-            if k_ax == 0:  # wykres y(x)
-                safe_set_lim(axes_lorenz_euler_2d[i, k_ax], True, x_e)  # x-axis
-                safe_set_lim(axes_lorenz_euler_2d[i, k_ax], False, y_e) # y-axis
-            elif k_ax == 1:  # wykres z(x)
-                safe_set_lim(axes_lorenz_euler_2d[i, k_ax], True, x_e)  # x-axis
-                safe_set_lim(axes_lorenz_euler_2d[i, k_ax], False, z_e) # y-axis
-            else:  # wykres z(y)
-                safe_set_lim(axes_lorenz_euler_2d[i, k_ax], True, y_e)  # x-axis
-                safe_set_lim(axes_lorenz_euler_2d[i, k_ax], False, z_e) # y-axis
-
-    # Wykres 3D
-    ax_3d = axes_lorenz_euler_3d[i]
-    ax_3d.plot(x_e, y_e, z_e, lw=0.7, color='red')
-    ax_3d.set_xlabel("X")
-    ax_3d.set_ylabel("Y")
-    ax_3d.set_zlabel("Z")
-    ax_3d.set_title(f'Układ Lorenza 3D (Euler), dt = {dt_lorenz}')
-    figs_lorenz_euler_3d[i].suptitle(f'Układ Lorenza 3D (Euler), dt = {dt_lorenz}', fontsize=16)
-    figs_lorenz_euler_3d[i].tight_layout(rect=[0,0,1,0.96])
-
-    # Obliczanie błędu
-    y_scipy_at_euler_t_lorenz = sol_lorenz_scipy_ref.sol(t_euler_lorenz)
-    error_x_l = np.mean(np.abs(x_e - y_scipy_at_euler_t_lorenz[0,:]))
-    error_y_l = np.mean(np.abs(y_e - y_scipy_at_euler_t_lorenz[1,:]))
-    error_z_l = np.mean(np.abs(z_e - y_scipy_at_euler_t_lorenz[2,:]))
-    avg_error_l = (error_x_l + error_y_l + error_z_l) / 3
-    print(f"  dt = {dt_lorenz}: Śr. błąd (x): {error_x_l:.4e}, (y): {error_y_l:.4e}, (z): {error_z_l:.4e}, Łączny średni: {avg_error_l:.4e}")
-
-
-fig_lorenz_euler_2d.suptitle('Układ Lorenza zamodelowany przy pomocy metody Eulera (rzuty 2D)', fontsize=16, y=1.02)
-fig_lorenz_euler_2d.tight_layout(rect=[0, 0, 1, 0.98])
-
-
-# 2. Metoda scipy.integrate dla Lorenza
-print("\n2. Metoda scipy.integrate (solve_ivp):")
-dt_scipy_plot_lorenz = 0.002 # Krok dla t_eval, zgodnie z opisem Fig 4, 5
-t_eval_lorenz_scipy = np.arange(t_span_lorenz[0], t_span_lorenz[1] + dt_scipy_plot_lorenz, dt_scipy_plot_lorenz)
-
-sol_lorenz_scipy = solve_ivp(
-    lorenz_rhs, t_span_lorenz, initial_state_lorenz,
-    args=(sigma, rho, beta), dense_output=True, t_eval=t_eval_lorenz_scipy
-)
-x_s, y_s, z_s = sol_lorenz_scipy.y[0,:], sol_lorenz_scipy.y[1,:], sol_lorenz_scipy.y[2,:]
-
-# Wykresy 2D (rzuty) - jak na Rysunku 4
-fig_lorenz_scipy_2d, axes_lorenz_scipy_2d = plt.subplots(3, 1, figsize=(8, 15))
-# y(x)
-axes_lorenz_scipy_2d[0].plot(x_s, y_s, color='red', lw=0.7)
-axes_lorenz_scipy_2d[0].set_xlabel('x')
-axes_lorenz_scipy_2d[0].set_ylabel('y')
-axes_lorenz_scipy_2d[0].set_title('y(x) - Scipy')
-axes_lorenz_scipy_2d[0].grid(True)
-# z(x)
-axes_lorenz_scipy_2d[1].plot(x_s, z_s, color='red', lw=0.7)
-axes_lorenz_scipy_2d[1].set_xlabel('x')
-axes_lorenz_scipy_2d[1].set_ylabel('z')
-axes_lorenz_scipy_2d[1].set_title('z(x) - Scipy')
-axes_lorenz_scipy_2d[1].grid(True)
-# z(y)
-axes_lorenz_scipy_2d[2].plot(y_s, z_s, color='red', lw=0.7)
-axes_lorenz_scipy_2d[2].set_xlabel('y')
-axes_lorenz_scipy_2d[2].set_ylabel('z')
-axes_lorenz_scipy_2d[2].set_title('z(y) - Scipy')
-axes_lorenz_scipy_2d[2].grid(True)
-
-fig_lorenz_scipy_2d.suptitle('Układ Lorenza (scipy.integrate) - rzuty 2D', fontsize=16, y=1.01)
-fig_lorenz_scipy_2d.tight_layout(rect=[0, 0, 1, 0.99])
-
-# Wykres 3D - jak na Rysunku 5
-fig_lorenz_scipy_3d = plt.figure(figsize=(10, 8))
-ax_lorenz_scipy_3d = fig_lorenz_scipy_3d.add_subplot(111, projection='3d')
-ax_lorenz_scipy_3d.plot(x_s, y_s, z_s, lw=0.7, color='red')
-ax_lorenz_scipy_3d.set_xlabel("X")
-ax_lorenz_scipy_3d.set_ylabel("Y")
-ax_lorenz_scipy_3d.set_zlabel("Z")
-ax_lorenz_scipy_3d.set_title(f'Wizualizacja z(x,y) układu Lorenza (Scipy), dt_eval = {dt_scipy_plot_lorenz}')
-fig_lorenz_scipy_3d.tight_layout()
-
+plt.xlabel("Czas [t]")
+plt.ylabel("Błąd (odległość euklidesowa) [skala log]")
+plt.yscale("log")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
 plt.show()
 
-print("\nZakończono symulacje.")
+print("\n==== Lotka-Volterra: Wykresy populacji (Euler) ====")
+for dt in dt_values_lv_sorted:
+    t = np.arange(0, t_max_lv + dt/2, dt)
+    sol = euler(lotka_volterra, initial_conditions_lv, t)
+
+    if sol.shape[0] < 2:
+        print(f"Symulacja Lotka-Volterra Euler dla dt={dt} nie dała wystarczających wyników do wykreślenia.")
+        continue
+
+    plt.figure()
+    plt.title(f"Lotka-Volterra – Euler (dt = {dt})")
+    plt.plot(t[:sol.shape[0]], sol[:, 0], label="Ofiary (x)", color="blue")
+    plt.plot(t[:sol.shape[0]], sol[:, 1], label="Drapieżniki (y)", color="red")
+    plt.xlabel("Czas [t]")
+    plt.ylabel("Populacja")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+print("\n==== Lotka-Volterra: Wykres populacji (odeint) ====")
+t_odeint_lv = np.linspace(0, t_max_lv, 500)
+sol_odeint_lv = odeint(lotka_volterra, initial_conditions_lv, t_odeint_lv)
+
+plt.figure()
+plt.title("Lotka-Volterra – odeint")
+plt.plot(t_odeint_lv, sol_odeint_lv[:, 0], label="Ofiary (x)", color="blue")
+plt.plot(t_odeint_lv, sol_odeint_lv[:, 1], label="Drapieżniki (y)", color="red")
+plt.xlabel("Czas [t]")
+plt.ylabel("Populacja")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+# ==== LORENZ: Obliczanie błędów dla różnych dt ====
+dt_values_lorenz = [0.3, 0.005, 0.001]
+t_max_lorenz = 25
+initial_conditions_lorenz = [1, 1, 1]
+
+print("\n==== Lorenz: Obliczanie i wyświetlanie średnich błędów aproksymacji ====")
+lorenz_errors = {}
+
+for dt in dt_values_lorenz:
+    t = np.arange(0, t_max_lorenz + dt/2, dt)
+    mean_error, errors, t_truncated = calculate_euler_error(
+        lorenz, initial_conditions_lorenz, t
+    )
+    lorenz_errors[dt] = mean_error
+    if not np.isnan(mean_error):
+         print(f"dt = {dt}: Średni błąd = {mean_error:.6e}")
+    else:
+         print(f"dt = {dt}: Nie można obliczyć średniego błędu (symulacja Eulera nie powiodła się lub brak danych)")
+
+
+# ==== LORENZ: Wykres błędu metody Eulera w czasie ====
+print("\n==== Lorenz: Generowanie wykresu błędów w czasie (Euler vs odeint) ====")
+fig_lorenz_error = plt.figure(figsize=(10, 6))
+plt.title("Błędy aproksymacji metody Eulera dla układu Lorenza")
+
+dt_values_lorenz_sorted = sorted(dt_values_lorenz, reverse=True)
+
+for dt in dt_values_lorenz_sorted:
+    t = np.arange(0, t_max_lorenz + dt/2, dt)
+    mean_error, errors, t_truncated = calculate_euler_error(
+        lorenz, initial_conditions_lorenz, t
+    )
+
+    if not np.isnan(mean_error):
+        plt.plot(t_truncated, errors, label=f"dt = {dt} (Średni błąd: {mean_error:.2e})")
+    else:
+        print(f"Nie można wykreślić błędu dla dt={dt}, symulacja Eulera nie powiodła się lub brak danych.")
+
+plt.xlabel("Czas [t]")
+plt.ylabel("Błąd (odległość euklidesowa) [skala log]")
+plt.yscale("log")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+# ==== LORENZ: Euler – rzuty 2D dla różnych dt (każdy zestaw w osobnym oknie) ====
+print("\n==== Lorenz: Generowanie wykresów rzutów 2D (Euler) dla różnych dt ====")
+
+for dt in dt_values_lorenz_sorted:
+    t = np.arange(0, t_max_lorenz + dt/2, dt)
+    sol = euler(lorenz, initial_conditions_lorenz, t)
+
+    if sol.shape[0] < 2:
+         print(f"Symulacja Lorenz Euler dla dt={dt} nie dała wystarczających wyników do wykreślenia rzutów 2D.")
+         continue
+
+    x, y, z = sol[:, 0], sol[:, 1], sol[:, 2]
+
+    # Tworzymy nową figurę dla tego konkretnego dt
+    fig = plt.figure(figsize=(15, 5))
+    fig.suptitle(f"Układ Lorenza – Euler (rzuty 2D, dt = {dt})", fontsize=16)
+
+    # Rzut x vs y
+    ax1 = fig.add_subplot(1, 3, 1)
+    ax1.plot(x, y, color="firebrick", linewidth=1)
+    ax1.set_xlabel("x")
+    ax1.set_ylabel("y")
+    ax1.set_title("x vs y")
+    ax1.grid(True)
+
+    # Rzut x vs z
+    ax2 = fig.add_subplot(1, 3, 2)
+    ax2.plot(x, z, color="firebrick", linewidth=1)
+    ax2.set_xlabel("x")
+    ax2.set_ylabel("z")
+    ax2.set_title("x vs z")
+    ax2.grid(True)
+
+    # Rzut y vs z
+    ax3 = fig.add_subplot(1, 3, 3)
+    ax3.plot(y, z, color="firebrick", linewidth=1)
+    ax3.set_xlabel("y")
+    ax3.set_ylabel("z")
+    ax3.set_title("y vs z")
+    ax3.grid(True)
+
+    # Dopasowanie układu wykresów i wyświetlenie figury
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
+
+
+# ==== LORENZ: odeint – rzuty 2D ====
+print("\n==== Lorenz: Wykresy rzutów 2D (odeint) ====")
+t_odeint_lorenz = np.linspace(0, t_max_lorenz, 5000)
+sol_odeint_lorenz = odeint(lorenz, initial_conditions_lorenz, t_odeint_lorenz)
+x_odeint, y_odeint, z_odeint = (
+    sol_odeint_lorenz[:, 0],
+    sol_odeint_lorenz[:, 1],
+    sol_odeint_lorenz[:, 2],
+)
+
+fig_odeint_2d, axes_odeint_2d = plt.subplots(1, 3, figsize=(15, 5))
+fig_odeint_2d.suptitle(
+    "Układ Lorenza zamodelowany przy pomocy odeint", fontsize=16
+)
+
+axes_odeint_2d[0].plot(x_odeint, y_odeint, color="mediumvioletred", linewidth=1)
+axes_odeint_2d[0].set_xlabel("x")
+axes_odeint_2d[0].set_ylabel("y")
+axes_odeint_2d[0].set_title("x vs y")
+axes_odeint_2d[0].grid(True)
+
+axes_odeint_2d[1].plot(x_odeint, z_odeint, color="mediumvioletred", linewidth=1)
+axes_odeint_2d[1].set_xlabel("x")
+axes_odeint_2d[1].set_ylabel("z")
+axes_odeint_2d[1].set_title("x vs z")
+axes_odeint_2d[1].grid(True)
+
+axes_odeint_2d[2].plot(y_odeint, z_odeint, color="mediumvioletred", linewidth=1)
+axes_odeint_2d[2].set_xlabel("y")
+axes_odeint_2d[2].set_ylabel("z")
+axes_odeint_2d[2].set_title("y vs z")
+axes_odeint_2d[2].grid(True)
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
+
+# ==== LORENZ: Euler – wykresy 3D dla różnych dt ====
+print("\n==== Lorenz: Generowanie wykresów 3D (Euler) dla różnych dt ====")
+
+for dt in dt_values_lorenz_sorted:
+    t = np.arange(0, t_max_lorenz + dt/2, dt)
+    sol_euler = euler(lorenz, initial_conditions_lorenz, t)
+
+    if sol_euler.shape[0] < 2:
+        print(f"Symulacja Lorenz Euler 3D dla dt={dt} nie dała wystarczających wyników do wykreślenia.")
+        continue
+
+    x_euler, y_euler, z_euler = sol_euler[:, 0], sol_euler[:, 1], sol_euler[:, 2]
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot(x_euler, y_euler, z_euler, color="darkblue", linewidth=0.8)
+    ax.set_title(f"Układ Lorenza – metoda Eulera (3D, dt={dt})")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+
+    plt.tight_layout()
+    plt.show()
+
+# ==== LORENZ: odeint – wykres 3D ====
+print("\n==== Lorenz: Wykres 3D (odeint) ====")
+fig_odeint_3d = plt.figure(figsize=(10, 8))
+ax_odeint_3d = fig_odeint_3d.add_subplot(111, projection="3d")
+ax_odeint_3d.plot(x_odeint, y_odeint, z_odeint, color="indigo", linewidth=0.8)
+ax_odeint_3d.set_title("Układ Lorenza – odeint (3D)")
+ax_odeint_3d.set_xlabel("x")
+ax_odeint_3d.set_ylabel("y")
+ax_odeint_3d.set_zlabel("z")
+plt.tight_layout()
+plt.show()
+
+print("\n==== Symulacje zakończone ====")
