@@ -56,7 +56,7 @@ def run_and_plot_simulation(params, t_span=(0, 25), num_points=1000):
     )
     N_numeric = sol.y[0]
 
-    # --- Obliczenie błędów i wizualizacja (bez zmian) ---
+    # --- Obliczenie błędów i wizualizacja ---
     abs_error = np.abs(N_numeric - N_exact)
     mae = np.mean(abs_error)
     mse = np.mean((N_numeric - N_exact)**2)
@@ -64,7 +64,7 @@ def run_and_plot_simulation(params, t_span=(0, 25), num_points=1000):
     # Wykres 1: Porównanie
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     ax1.plot(t_eval, N_numeric, 'k-', label='Rozwiązanie numeryczne (SciPy)', linewidth=4)
-    ax1.plot(t_eval, N_exact, 'r--', label='Rozwiązanie dokładne (SymPy)', linewidth=2)
+    ax1.plot(t_eval, N_exact, 'r--', label='Rozwiązanie analityczne (SymPy)', linewidth=2)
     ax1.set_title(f"Model wzrostu logistycznego: {label}")
     ax1.set_xlabel('Czas [t]')
     ax1.set_ylabel('Wielkość populacji [N(t)]')
@@ -89,7 +89,7 @@ def run_and_plot_simulation(params, t_span=(0, 25), num_points=1000):
 
     return {"Opis": label, "MAE": mae, "MSE": mse}
 
-# --- Scenariusze i uruchomienie (bez zmian) ---
+# --- Scenariusze i uruchomienie ---
 scenarios = [
     {'label': '1. Scenariusz bazowy', 'r': 0.5, 'K': 1000, 'N0': 50},
     {'label': '2. Szybki wzrost (r=2.0)', 'r': 2.0, 'K': 1000, 'N0': 50},
