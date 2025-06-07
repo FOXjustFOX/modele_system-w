@@ -60,16 +60,10 @@ def calculate_euler_error(system, initial_conditions, t_values):
          return np.nan, np.array([]), np.array([])
 
     t_truncated = t_values[: len(euler_solution)]
-    if len(t_truncated) == 0:
-        print("Truncated time vector is empty. Cannot calculate error.")
-        return np.nan, np.array([]), np.array([])
 
     odeint_solution = odeint(system, initial_conditions, t_truncated, rtol=1e-8, atol=1e-8)
 
-    if odeint_solution.shape[0] != len(t_truncated):
-         print(f"Warning: odeint returned {odeint_solution.shape[0]} points, expected {len(t_truncated)}. Skipping error calculation.")
-         return np.nan, np.array([]), np.array([])
-
+    #odl euklidesowa
     errors = np.sqrt(
         np.sum((euler_solution - odeint_solution) ** 2, axis=1)
     )
